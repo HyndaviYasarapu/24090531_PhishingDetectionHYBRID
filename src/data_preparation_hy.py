@@ -264,7 +264,7 @@ class DataPreparation:
         print("This may take a while depending on dataset size...")
         print("Consider extracting features from a sample first for testing.")
         
-        from src.feature_extraction import extract_features_from_dataset
+        from src.feature_extraction_hy import extract_features_from_dataset
         
         features_df = extract_features_from_dataset(df)
         
