@@ -11,8 +11,8 @@ MODELS_DIR = os.path.join(PROJECT_ROOT, 'models')
 RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
 
 # Data Files
-RAW_DATA_FILE = os.path.join(DATA_DIR, 'phishing_dataset_hyn.csv')
-PROCESSED_DATA_FILE = os.path.join(DATA_DIR, 'processed_features_hyn.csv')
+RAW_DATA_FILE = os.path.join(DATA_DIR, 'phishing_dataset.csv')
+PROCESSED_DATA_FILE = os.path.join(DATA_DIR, 'processed_features.csv')
 TRAIN_DATA_FILE = os.path.join(DATA_DIR, 'train_data_hyn.csv')
 TEST_DATA_FILE = os.path.join(DATA_DIR, 'test_data_hyn.csv')
 
