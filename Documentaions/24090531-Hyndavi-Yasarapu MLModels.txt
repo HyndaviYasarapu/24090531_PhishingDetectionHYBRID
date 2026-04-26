@@ -1,0 +1,2054 @@
+
+================================================================================
+FINAL PROJECT — COMPLETE SOURCE CODE
+================================================================================
+Student Name   : Hyndavi Yasarapu
+Student Number : 24090531
+Module         : 7COM1039-0206-2025 Advanced Computer Science Masters Project
+Project Title  : An Intelligent Phishing Website Detection System
+Supervisor     : Tamie Salter
+================================================================================
+
+PROJECT STRUCTURE
+-----------------
+main.py                        <- Entry point, runs the full pipeline
+config.py                      <- Centralised settings and constants
+src/data_preparation_hy.py        <- Dataset loading and preprocessing
+src/feature_extraction_hy.py      <- FeatureExtractor class (27 features)
+src/rule_based_detector_hy.py     <- RuleBasedDetector class (15 rules)
+src/ml_detector_hy.py             <- MLDetector class (RF, SVM, LR)
+src/hybrid_detector_hy.py         <- HybridDetector class (3 strategies)
+
+
+================================================================================
+
+FILE : config.py
+
+================================================================================
+
+"""
+Configuration file for Phishing Detection System
+"""
+
+import os
+
+# Project Paths
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
+MODELS_DIR = os.path.join(PROJECT_ROOT, 'models')
+RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
+
+# Data Files
+RAW_DATA_FILE = os.path.join(DATA_DIR, 'phishing_dataset_hyn.csv')
+PROCESSED_DATA_FILE = os.path.join(DATA_DIR, 'processed_features_hyn.csv')
+TRAIN_DATA_FILE = os.path.join(DATA_DIR, 'train_data_hyn.csv')
+TEST_DATA_FILE = os.path.join(DATA_DIR, 'test_data_hyn.csv')
+
+# Model Files
+RULE_BASED_MODEL = os.path.join(MODELS_DIR, 'rule_based_detector.pkl')
+ML_MODEL = os.path.join(MODELS_DIR, 'ml_classifier.pkl')
+HYBRID_MODEL = os.path.join(MODELS_DIR, 'hybrid_detector.pkl')
+SCALER_FILE = os.path.join(MODELS_DIR, 'feature_scaler.pkl')
+
+# Feature Engineering
+TIMEOUT_SECONDS = 5  # Timeout for web requests
+USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+
+# Model Parameters
+TEST_SIZE = 0.2
+RANDOM_STATE = 42
+CV_FOLDS = 5
+
+# Rule-Based Thresholds (will be optimized from data)
+URL_LENGTH_THRESHOLD = 54
+SUBDOMAIN_COUNT_THRESHOLD = 3
+DOT_COUNT_THRESHOLD = 5
+HYPHEN_COUNT_THRESHOLD = 3
+
+# Feature Categories
+URL_FEATURES = [
+    'url_length',
+    'has_ip',
+    'subdomain_count',
+    'dot_count',
+    'hyphen_count',
+    'at_symbol',
+    'double_slash_redirecting',
+    'prefix_suffix',
+    'shortening_service',
+    'suspicious_tld'
+]
+
+DOMAIN_FEATURES = [
+    'has_https',
+    'domain_age_days',
+    'has_dns_record',
+]
+
+CONTENT_FEATURES = [
+    'num_external_links',
+    'num_internal_links',
+    'has_form',
+    'num_scripts',
+    'num_iframes',
+    'has_login_form',
+    'suspicious_keywords_count'
+]
+
+LEXICAL_FEATURES = [
+    'digit_count',
+    'letter_count',
+    'special_char_count',
+    'entropy'
+]
+
+ALL_FEATURES = URL_FEATURES + DOMAIN_FEATURES + CONTENT_FEATURES + LEXICAL_FEATURES
+
+# Suspicious Keywords
+SUSPICIOUS_KEYWORDS = [
+    'login', 'signin', 'verify', 'account', 'update', 'confirm',
+    'secure', 'banking', 'suspended', 'password', 'credential'
+]
+
+# Suspicious TLDs
+SUSPICIOUS_TLDS = [
+    '.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top', '.work'
+]
+
+# URL Shortening Services
+SHORTENING_SERVICES = [
+    'bit.ly', 'goo.gl', 'tinyurl.com', 'ow.ly', 't.co',
+    'is.gd', 'buff.ly', 'adf.ly', 'short.link'
+]
+
+# Machine Learning Algorithms to Compare
+ML_ALGORITHMS = {
+    'Random Forest': {
+        'n_estimators': [50, 100, 200],
+        'max_depth': [10, 20, None],
+        'min_samples_split': [2, 5, 10]
+    },
+    'SVM': {
+        'C': [0.1, 1, 10],
+        'kernel': ['rbf', 'linear'],
+        'gamma': ['scale', 'auto']
+    },
+    'Logistic Regression': {
+        'C': [0.1, 1, 10],
+        'penalty': ['l2'],
+        'solver': ['lbfgs', 'liblinear']
+    }
+}
+
+
+
+================================================================================
+
+FILE : main.py
+
+================================================================================
+
+import os
+import sys
+import warnings
+warnings.filterwarnings('ignore')
+
+from src.data_preparation_hy import DataPreparation, create_sample_dataset
+from src.feature_extraction_hy import extract_features_from_dataset
+
+from config import DATA_DIR, MODELS_DIR, RESULTS_DIR
+import pandas as pd
+
+
+def setup_directories_hy():
+    """Create necessary project directories"""
+    for directory_hy in [DATA_DIR, MODELS_DIR, RESULTS_DIR]:
+        os.makedirs(directory_hy, exist_ok=True)
+    
+    print("Project directories created/verified successfully.")
+
+# ============================================
+# STEP 1: DATA PREPARATION
+# ============================================
+
+
+print("STEP 1: DATA PREPARATION (KAGGLE DATASET)")
+
+
+# Data preparation variable is prep_hy
+
+prep_hy = DataPreparation()
+
+try:
+    # Try loading Kaggle dataset
+    sample_dataset_hy = prep_hy.load_raw_data(try_auto_download=True)
+    sample_dataset_hy = prep_hy.clean_data(sample_dataset_hy)
+
+except FileNotFoundError:
+    print("\nDEMO MODE: Creating Sample Dataset")
+    print("Kaggle dataset not found. Creating sample dataset...")
+
+    sample_dataset_hy = create_sample_dataset(n_samples=3000)
+    sample_dataset_hy = prep_hy.clean_data(sample_dataset_hy)
+
+print("\nData Preparation Complete!")
+print("Dataset shape:", sample_dataset_hy.shape)
+sample_dataset_hy.head()
+
+
+# ================================================================
+# STEP 2: FEATURE EXTRACTION
+# ================================================================
+
+print("STEP 2: FEATURE EXTRACTION")
+
+    
+# For sample/small datasets, extract features
+# For large datasets, you may want to extract features in batches
+    
+if len(sample_dataset_hy) <= 500:
+    print("\nExtracting features from URLs...")
+    print("Note: This may take a few minutes for network-based features...")
+    features_df_HY = prep_hy.load_or_extract_features(sample_dataset_hy, force_extract=False)
+else:
+    print("\nLarge dataset detected. Extracting features from first 500 URLs...")
+    print("For full dataset, run feature extraction separately.")
+    df_datasetHY_sample = sample_dataset_hy.head(3000)
+    features_df_HY = prep_hy.load_or_extract_features(df_datasetHY_sample, force_extract=False)
+    
+print(f"\nFeature extraction complete!")
+print(f"Features shape: {features_df_HY.shape}")
+print(f"Features: {list(features_df_HY.columns)}")
+
+
+# ================================================================
+# STEP 3: TRAIN-TEST SPLIT
+# ================================================================
+
+print("STEP 3: TRAIN-TEST SPLIT")
+
+    
+X_train_hyn, X_test_hyn, y_train_hyn, y_test_hyn = prep_hy.prepare_train_test_split(features_df_HY)
+    
+# Scale features for ML
+X_train_scaledhyn, X_test_scaledhyn = prep_hy.scale_features(X_train_hyn, X_test_hyn)
+       
+
+
+# ================================================================
+# STEP 4: RULE-BASED DETECTOR
+# ================================================================
+from src.rule_based_detector_hy import RuleBasedDetector
+
+print("STEP 4: RULE-BASED DETECTOR")
+
+    
+rule_detector_class_hyn = RuleBasedDetector()
+rule_detector_class_hyn.optimize_thresholds(X_train_hyn, y_train_hyn)
+rule_detector_metrics = rule_detector_class_hyn.evaluate(X_test_hyn, y_test_hyn)
+rule_detector_class_hyn.save()
+
+
+
+# ================================================================
+# STEP 5: MACHINE LEARNING DETECTOR
+# ================================================================
+
+print("STEP 5: MACHINE LEARNING DETECTOR")
+
+from src.ml_detector_hy import MLDetector  
+from src.ml_detector_hy import compare_algorithms_all_hyn
+print("\nOption 1: Train single best algorithm (Random Forest)")
+print("Option 2: Compare multiple algorithms")
+
+userinput = int(input("Select option 1 or Option 2"))
+
+
+if userinput == 1:
+    print("\nTraining Random Forest classifier...")
+    ml_detector_hyn = MLDetector(algorithm='Random Forest')
+    ml_detector_hyn.train(X_train_scaledhyn, y_train_hyn, use_grid_search=True)
+    ml_metricshyn = ml_detector_hyn.evaluate(X_test_scaledhyn, y_test_hyn)
+    ml_detector_hyn.save()
+elif userinput == 2:
+    print("\nComparing multiple algorithms...")
+    ml_detector_hyn = MLDetector()
+    resultshyn, best_algohyn = compare_algorithms_all_hyn(X_train_scaledhyn, X_test_scaledhyn, y_train_hyn, y_test_hyn)
+    ml_detector_hyn = resultshyn[best_algohyn]['detector']
+else:
+    print("!!!!!!!!!!!!!!!!!! Check your Selection !!!!!!!!!!!!!!!!!!!!!!")
+
+
+# ================================================================
+# STEP 6: HYBRID DETECTOR
+# ================================================================
+
+print("STEP 6: HYBRID DETECTOR")
+
+from src.hybrid_detector_hy import HybridDetector 
+from src.ml_detector_hy import MLDetector
+from src.rule_based_detector_hy import RuleBasedDetector
+rule_based_detector_hy = RuleBasedDetector()
+ml_detector_hy = MLDetector(algorithm='Random Forest')
+ml_detector_hy.train(X_train_scaledhyn, y_train_hyn, use_grid_search=True)
+# Create validation set from training data for weight optimization
+val_size_hyn = int(len(X_train_hyn) * 0.2)
+X_val_hyn = X_train_hyn.iloc[-val_size_hyn:]
+y_val_hyn = y_train_hyn.iloc[-val_size_hyn:]
+X_val_scaledhyn = X_train_scaledhyn.iloc[-val_size_hyn:]
+    
+# Try different strategies
+strategies = ['weighted', 'voting', 'cascade']
+best_strategy = None
+best_f1 = 0
+best_hybrid_hyn = None
+    
+for strategy in strategies:
+    print(f"\n{'='*70}")
+    print(f"Testing Hybrid Strategy: {strategy.upper()}")
+    print(f"{'='*70}")
+        
+    hybrid = HybridDetector(rule_based_detector_hy, ml_detector_hy, strategy=strategy)
+        
+    if strategy == 'weighted':
+        hybrid.optimize_weights(X_val_scaledhyn, y_val_hyn)
+        
+    metrics = hybrid.evaluate(X_test_scaledhyn, y_test_hyn, show_comparison=True)
+        
+    if metrics['f1_score'] > best_f1:
+        best_f1 = metrics['f1_score']
+        best_strategy = strategy
+        best_hybrid_hyn = hybrid
+    
+print(f"\n{'='*70}")
+print(f"BEST HYBRID STRATEGY: {best_strategy.upper()}")
+print(f"F1-Score: {best_f1:.4f}")
+print(f"{'='*70}")
+    
+# Save best hybrid detector
+best_hybrid_hyn.save()
+
+# ================================================================
+# STEP 7: DETAILED ANALYSIS
+# ================================================================
+
+print("STEP 7: DETAILED PREDICTION ANALYSIS")
+
+    
+best_hybrid_hyn.analyze_predictions(X_test_scaledhyn, y_test_hyn, n_samples=5)
+    
+# ================================================================
+# STEP 8: FINAL SUMMARY
+# ================================================================
+
+print("FINAL SUMMARY")
+
+    
+print("\nAll detection systems have been trained and evaluated!")
+print(f"\nResults Summary:")
+print(f"  Rule-Based Detector F1-Score:  {rule_detector_metrics['f1_score']:.4f}")
+print(f"  ML Detector F1-Score:          {ml_metricshyn['f1_score']:.4f}")
+print(f"  Hybrid Detector F1-Score:      {best_f1:.4f}")
+    
+print(f"\nModels saved in: {MODELS_DIR}")
+print(f"Results saved in: {RESULTS_DIR}")
+    
+
+print("Pipeline execution completed successfully!")
+
+
+================================================================================
+
+FILE : src/data_preparation_hy.py
+
+================================================================================
+
+"""
+Data Preparation Module
+Handles loading and preprocessing of phishing dataset from Kaggle
+Supports automatic download via Kaggle API
+"""
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+import os
+import subprocess
+import zipfile
+import glob
+
+from config import (
+    DATA_DIR, RAW_DATA_FILE, PROCESSED_DATA_FILE,
+    TRAIN_DATA_FILE, TEST_DATA_FILE, TEST_SIZE, RANDOM_STATE
+)
+
+
+class DataPreparation:
+    """Handle data loading and preprocessing"""
+    
+    def __init__(self):
+        self.scaler = StandardScaler()
+    
+    def download_kaggle_dataset(self, dataset_name='shashwatwork/web-page-phishing-detection-dataset', auto=False):
+        """
+        Download dataset from Kaggle automatically or show instructions
+        
+        Args:
+            dataset_name: Kaggle dataset identifier (default: recommended phishing dataset)
+            auto: If True, attempts automatic download via Kaggle API
+        
+        Recommended datasets:
+        1. "shashwatwork/web-page-phishing-detection-dataset" (11,430 URLs) - RECOMMENDED
+        2. "taruntiwarihp/phishing-site-urls" (5,000+ URLs)
+        3. "sid321axn/malicious-urls-dataset" (650,000+ URLs)
+        """
+        
+        if auto:
+            try:
+                print(f"\nAttempting to download Kaggle dataset: {dataset_name}")
+                print("Checking Kaggle API credentials...")
+                
+                # Check if kaggle is installed
+                try:
+                    import kaggle
+                    print("✓ Kaggle package found")
+                except ImportError:
+                    print("✗ Kaggle package not found. Installing...")
+                    subprocess.run(['pip', 'install', 'kaggle'], check=True)
+                    import kaggle
+                
+                # Create data directory
+                os.makedirs(DATA_DIR, exist_ok=True)
+                
+                # Download dataset
+                print(f"Downloading {dataset_name}...")
+                from kaggle.api.kaggle_api_extended import KaggleApi
+                api = KaggleApi()
+                api.authenticate()
+                
+                # Download to data directory
+                api.dataset_download_files(dataset_name, path=DATA_DIR, unzip=True)
+                
+                print("✓ Dataset downloaded successfully!")
+                
+                # Find the CSV file
+                csv_files = glob.glob(os.path.join(DATA_DIR, '*.csv'))
+                if csv_files:
+                    # Rename to standard filename
+                    source_file = csv_files[0]
+                    if source_file != RAW_DATA_FILE:
+                        os.rename(source_file, RAW_DATA_FILE)
+                        print(f"✓ Renamed {os.path.basename(source_file)} to phishing_dataset.csv")
+                    
+                    print(f"\n✓ Dataset ready at: {RAW_DATA_FILE}")
+                    return True
+                else:
+                    print("✗ No CSV file found in downloaded data")
+                    return False
+                    
+            except Exception as e:
+                print(f"\n✗ Automatic download failed: {e}")
+                print("\nFalling back to manual instructions...")
+                auto = False
+        
+        if not auto:
+            print("=" * 70)
+            print("KAGGLE DATASET DOWNLOAD INSTRUCTIONS")
+            print("=" * 70)
+            print("\nOption 1: Using Kaggle API (Recommended)")
+            print("-" * 70)
+            print("1. Install kaggle: pip install kaggle")
+            print("2. Set up Kaggle API credentials:")
+            print("   - Go to https://www.kaggle.com/account")
+            print("   - Click 'Create New API Token'")
+            print("   - Place kaggle.json in ~/.kaggle/")
+            print("3. Run one of these commands:")
+            print("\n   # Dataset 1: Phishing Website Detection (RECOMMENDED - 11,430 URLs)")
+            print("   kaggle datasets download -d shashwatwork/web-page-phishing-detection-dataset")
+            print("   unzip web-page-phishing-detection-dataset.zip -d data/")
+            print("\n   # Dataset 2: Phishing URLs Dataset (5,000+ URLs)")
+            print("   kaggle datasets download -d taruntiwarihp/phishing-site-urls")
+            print("   unzip phishing-site-urls.zip -d data/")
+            print("\n   # Dataset 3: Malicious URLs Dataset (650,000+ URLs)")
+            print("   kaggle datasets download -d sid321axn/malicious-urls-dataset")
+            print("   unzip malicious-urls-dataset.zip -d data/")
+            print("\n4. Rename the CSV file to 'phishing_dataset.csv' in data/ directory")
+            print("\nOption 2: Manual Download from Browser")
+            print("-" * 70)
+            print("1. Visit: https://www.kaggle.com/datasets/shashwatwork/web-page-phishing-detection-dataset")
+            print("2. Click 'Download' button")
+            print("3. Extract CSV file")
+            print("4. Place in data/ directory as 'phishing_dataset.csv'")
+            print("\nExpected CSV format:")
+            print("- Must have 'url' column with URLs")
+            print("- Must have 'label' column (0=legitimate, 1=phishing)")
+            print("  OR 'status' column ('legitimate'/'phishing')")
+            print("=" * 70)
+            return False
+    
+    def load_raw_data(self, filepath=None, try_auto_download=True):
+        """
+        Load raw phishing dataset from Kaggle
+        
+        Args:
+            filepath: Path to CSV file. If None, uses default from config
+            try_auto_download: If True and file not found, attempts Kaggle download
+        
+        Returns:
+            pandas DataFrame
+        """
+        if filepath is None:
+            filepath = RAW_DATA_FILE
+        
+        if not os.path.exists(filepath):
+            print(f"\nDataset not found at {filepath}")
+            
+            if try_auto_download:
+                print("\nAttempting automatic download from Kaggle...")
+                success = self.download_kaggle_dataset(auto=True)
+                
+                if not success:
+                    print("\nAutomatic download failed.")
+                    self.download_kaggle_dataset(auto=False)
+                    raise FileNotFoundError(
+                        f"Please download dataset manually and place it at {filepath}"
+                    )
+            else:
+                self.download_kaggle_dataset(auto=False)
+                raise FileNotFoundError(
+                    f"Please download dataset and place it at {filepath}"
+                )
+        
+        print(f"\nLoading Kaggle dataset from {filepath}...")
+        df = pd.read_csv(filepath)
+        
+        # Standardize column names
+        df.columns = df.columns.str.lower().str.strip()
+        
+        print(f"Initial dataset shape: {df.shape}")
+        print(f"Columns found: {df.columns.tolist()}")
+        
+        # Handle different label formats from various Kaggle datasets
+        if 'label' not in df.columns:
+            if 'status' in df.columns:
+                # Convert status to label (0=legitimate, 1=phishing)
+                print("Converting 'status' column to 'label'...")
+                df['label'] = df['status'].apply(
+                    lambda x: 1 if str(x).lower() in ['phishing', 'bad', '1', 'malicious'] else 0
+                )
+            elif 'class' in df.columns:
+                print("Converting 'class' column to 'label'...")
+                df['label'] = df['class'].apply(
+                    lambda x: 1 if str(x).lower() in ['phishing', 'bad', '1', 'malicious'] else 0
+                )
+            elif 'type' in df.columns:
+                print("Converting 'type' column to 'label'...")
+                df['label'] = df['type'].apply(
+                    lambda x: 1 if str(x).lower() in ['phishing', 'bad', '1', 'malicious'] else 0
+                )
+        
+        # Ensure we have required columns
+        if 'url' not in df.columns:
+            # Try to find URL column with different name
+            url_columns = [col for col in df.columns if 'url' in col.lower() or 'link' in col.lower() or 'website' in col.lower()]
+            if url_columns:
+                print(f"Found URL column as '{url_columns[0]}', renaming to 'url'")
+                df['url'] = df[url_columns[0]]
+            else:
+                raise ValueError("No URL column found in Kaggle dataset")
+        
+        if 'label' not in df.columns:
+            raise ValueError("No label column found. Kaggle dataset must have 'label', 'status', 'class', or 'type' column")
+        
+        # Ensure label is binary
+        df['label'] = df['label'].astype(int)
+        df = df[df['label'].isin([0, 1])]
+        
+        print(f"\nKaggle dataset loaded successfully!")
+        print(f"Final shape: {df.shape}")
+        print(f"\nClass distribution:")
+        print(df['label'].value_counts())
+        print(f"\nLegitimate URLs: {(df['label'] == 0).sum()} ({(df['label'] == 0).sum()/len(df)*100:.1f}%)")
+        print(f"Phishing URLs: {(df['label'] == 1).sum()} ({(df['label'] == 1).sum()/len(df)*100:.1f}%)")
+        
+        return df
+    
+    def clean_data(self, df):
+        """
+        Clean and validate dataset
+        
+        Args:
+            df: pandas DataFrame
+        
+        Returns:
+            Cleaned DataFrame
+        """
+        print("\nCleaning data...")
+        
+        initial_size = len(df)
+        
+        # Remove duplicates
+        df = df.drop_duplicates(subset=['url'])
+        print(f"Removed {initial_size - len(df)} duplicate URLs")
+        
+        # Remove missing values
+        df = df.dropna(subset=['url', 'label'])
+        
+        # Remove empty URLs
+        df = df[df['url'].str.strip() != '']
+        
+        # Ensure label is binary (0 or 1)
+        df['label'] = df['label'].astype(int)
+        df = df[df['label'].isin([0, 1])]
+        
+        print(f"Final dataset size: {len(df)}")
+        print(f"Legitimate: {(df['label'] == 0).sum()}")
+        print(f"Phishing: {(df['label'] == 1).sum()}")
+        
+        return df
+    
+    def load_or_extract_features(self, df, force_extract=False):
+        """
+        Load preprocessed features or extract from URLs
+        
+        Args:
+            df: DataFrame with URLs and labels
+            force_extract: If True, extract features even if processed file exists
+        
+        Returns:
+            DataFrame with features
+        """
+        if os.path.exists(PROCESSED_DATA_FILE) and not force_extract:
+            print(f"\nLoading preprocessed features from {PROCESSED_DATA_FILE}...")
+            features_df = pd.read_csv(PROCESSED_DATA_FILE)
+            print(f"Loaded {len(features_df)} samples with {len(features_df.columns)} features")
+            return features_df
+        
+        print("\nExtracting features from URLs...")
+        print("This may take a while depending on dataset size...")
+        print("Consider extracting features from a sample first for testing.")
+        
+        from src.feature_extraction_hy import extract_features_from_dataset
+        
+        features_df = extract_features_from_dataset(df)
+        
+        # Save processed features
+        os.makedirs(DATA_DIR, exist_ok=True)
+        features_df.to_csv(PROCESSED_DATA_FILE, index=False)
+        print(f"\nSaved processed features to {PROCESSED_DATA_FILE}")
+        
+        return features_df
+    
+    def prepare_train_test_split(self, features_df, save=True):
+        """
+        Split data into train and test sets
+        
+        Args:
+            features_df: DataFrame with features and label
+            save: Whether to save train/test splits
+        
+        Returns:
+            X_train, X_test, y_train, y_test
+        """
+        print("\nPreparing train-test split...")
+        
+        # Separate features and labels
+        X = features_df.drop('label', axis=1)
+        y = features_df['label']
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
+        )
+        
+        print(f"Training set: {len(X_train)} samples")
+        print(f"Test set: {len(X_test)} samples")
+        print(f"\nTraining set class distribution:")
+        print(y_train.value_counts())
+        print(f"\nTest set class distribution:")
+        print(y_test.value_counts())
+        
+        if save:
+            # Save splits
+            os.makedirs(DATA_DIR, exist_ok=True)
+            train_df = pd.concat([X_train, y_train], axis=1)
+            test_df = pd.concat([X_test, y_test], axis=1)
+            
+            train_df.to_csv(TRAIN_DATA_FILE, index=False)
+            test_df.to_csv(TEST_DATA_FILE, index=False)
+            print(f"\nSaved train data to {TRAIN_DATA_FILE}")
+            print(f"Saved test data to {TEST_DATA_FILE}")
+        
+        return X_train, X_test, y_train, y_test
+    
+    def scale_features(self, X_train, X_test):
+        """
+        Scale features using StandardScaler
+        
+        Args:
+            X_train: Training features
+            X_test: Test features
+        
+        Returns:
+            Scaled X_train, X_test
+        """
+        print("\nScaling features...")
+        
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        
+        # Convert back to DataFrame to preserve feature names
+        X_train_scaled = pd.DataFrame(
+            X_train_scaled, 
+            columns=X_train.columns, 
+            index=X_train.index
+        )
+        X_test_scaled = pd.DataFrame(
+            X_test_scaled, 
+            columns=X_test.columns, 
+            index=X_test.index
+        )
+        
+        return X_train_scaled, X_test_scaled
+
+
+def create_sample_dataset(n_samples=1000):
+    """
+    Create a small sample dataset for testing
+    Uses a subset of known legitimate and phishing URLs
+    """
+    print("Creating sample dataset for testing...")
+    
+    legitimate_urls = [
+        "https://www.google.com",
+        "https://www.facebook.com",
+        "https://www.amazon.com",
+        "https://www.wikipedia.org",
+        "https://www.github.com",
+        "https://www.stackoverflow.com",
+        "https://www.reddit.com",
+        "https://www.twitter.com",
+        "https://www.linkedin.com",
+        "https://www.youtube.com"
+    ]
+    
+    phishing_patterns = [
+        "http://secure-{}.com/login",
+        "http://{}-verify.tk/account",
+        "http://www.{}-update.ml/signin",
+        "http://192.168.1.{}/admin",
+        "http://{}-support.ga/verify"
+    ]
+    
+    companies = ["paypal", "amazon", "microsoft", "apple", "bank", "ebay"]
+    
+    urls = []
+    labels = []
+    
+    # Generate legitimate URLs (repeat to reach sample size)
+    for _ in range(n_samples // 2):
+        url = legitimate_urls[np.random.randint(0, len(legitimate_urls))]
+        urls.append(url)
+        labels.append(0)
+    
+    # Generate phishing URLs
+    for _ in range(n_samples // 2):
+        pattern = phishing_patterns[np.random.randint(0, len(phishing_patterns))]
+        company = companies[np.random.randint(0, len(companies))]
+        url = pattern.format(company)
+        urls.append(url)
+        labels.append(1)
+    
+    df = pd.DataFrame({'url': urls, 'label': labels})
+    
+    # Save sample dataset
+    os.makedirs(DATA_DIR, exist_ok=True)
+    sample_file = os.path.join(DATA_DIR, 'sample_dataset.csv')
+    df.to_csv(sample_file, index=False)
+    print(f"Sample dataset created: {sample_file}")
+    print(f"Size: {len(df)} URLs")
+    
+    return df
+
+
+if __name__ == "__main__":
+    # Test data preparation
+    prep = DataPreparation()
+    
+    # Show download instructions
+    prep.download_kaggle_dataset()
+    
+    # Create sample dataset for testing
+    sample_df = create_sample_dataset(100)
+    print("\nSample dataset created successfully!")
+    print(sample_df.head())
+
+================================================================================
+
+FILE : src/feature_extraction_hy.py
+
+================================================================================
+
+"""
+Feature Extraction Module for Phishing Detection
+Extracts URL-based, domain-based, and content-based features
+"""
+
+import re
+import math
+from urllib.parse import urlparse, parse_qs
+from collections import Counter
+import tldextract
+import requests
+from bs4 import BeautifulSoup
+import dns.resolver
+import whois
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
+
+from config import (
+    TIMEOUT_SECONDS, USER_AGENT, SUSPICIOUS_KEYWORDS,
+    SUSPICIOUS_TLDS, SHORTENING_SERVICES
+)
+
+
+class FeatureExtractor:
+    """Extract features from URLs for phishing detection"""
+    
+    def __init__(self):
+        self.timeout = TIMEOUT_SECONDS
+        self.headers = {'User-Agent': USER_AGENT}
+    
+    def extract_all_features(self, url):
+        """Extract all features from a URL"""
+        features = {}
+        
+        # URL-based features (fast, no network required)
+        features.update(self.extract_url_features(url))
+        
+        # Lexical features
+        features.update(self.extract_lexical_features(url))
+        
+        # Domain-based features (may require network)
+        features.update(self.extract_domain_features(url))
+        
+        # Content-based features (requires fetching page)
+        features.update(self.extract_content_features(url))
+        
+        return features
+    
+    def extract_url_features(self, url):
+        """Extract features from URL structure"""
+        features = {}
+        
+        try:
+            parsed = urlparse(url)
+            ext = tldextract.extract(url)
+            
+            # Basic URL characteristics
+            features['url_length'] = len(url)
+            
+            # Check for IP address in URL
+            ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+            features['has_ip'] = 1 if re.search(ip_pattern, parsed.netloc) else 0
+            
+            # Subdomain count
+            subdomain = ext.subdomain
+            features['subdomain_count'] = len(subdomain.split('.')) if subdomain else 0
+            
+            # Special character counts
+            features['dot_count'] = url.count('.')
+            features['hyphen_count'] = url.count('-')
+            features['at_symbol'] = 1 if '@' in url else 0
+            
+            # Double slash redirecting (after protocol)
+            features['double_slash_redirecting'] = 1 if url.count('//') > 1 else 0
+            
+            # Prefix or suffix with hyphen in domain
+            features['prefix_suffix'] = 1 if '-' in ext.domain else 0
+            
+            # URL shortening service
+            features['shortening_service'] = 1 if any(s in url.lower() for s in SHORTENING_SERVICES) else 0
+            
+            # Suspicious TLD
+            tld = ext.suffix
+            features['suspicious_tld'] = 1 if any(tld.endswith(s) for s in SUSPICIOUS_TLDS) else 0
+
+
+            
+        except Exception as e:
+            print(f"Error extracting URL features: {e}")
+            # Return default values
+            features = {
+                'url_length': 0, 'has_ip': 0, 'subdomain_count': 0,
+                'dot_count': 0, 'hyphen_count': 0, 'at_symbol': 0,
+                'double_slash_redirecting': 0, 'prefix_suffix': 0,
+                'shortening_service': 0, 'suspicious_tld': 0
+            }
+        
+        return features
+    
+    def extract_lexical_features(self, url):
+        """Extract lexical features from URL"""
+        features = {}
+        
+        try:
+            # Count digits, letters, special characters
+            features['digit_count'] = sum(c.isdigit() for c in url)
+            features['letter_count'] = sum(c.isalpha() for c in url)
+            features['special_char_count'] = sum(not c.isalnum() for c in url)
+            
+            # Calculate Shannon entropy
+            features['entropy'] = self._calculate_entropy(url)
+            
+        except Exception as e:
+            print(f"Error extracting lexical features: {e}")
+            features = {
+                'digit_count': 0, 'letter_count': 0,
+                'special_char_count': 0, 'entropy': 0
+            }
+        
+        return features
+    
+    def extract_domain_features(self, url):
+        """Extract domain-based features"""
+        features = {}
+        
+        try:
+            parsed = urlparse(url)
+            ext = tldextract.extract(url)
+            domain = f"{ext.domain}.{ext.suffix}"
+            
+            # HTTPS
+            features['has_https'] = 1 if parsed.scheme == 'https' else 0
+            
+            # Domain age (requires WHOIS lookup)
+            features['domain_age_days'] = self._get_domain_age(domain)
+            
+            # DNS record check
+            features['has_dns_record'] = self._has_dns_record(domain)
+            
+        except Exception as e:
+            print(f"Error extracting domain features: {e}")
+            features = {
+                'has_https': 0,
+                'domain_age_days': -1,
+                'has_dns_record': 0
+            }
+        
+        return features
+    
+    def extract_content_features(self, url):
+        """Extract features from webpage content"""
+        features = {
+            'num_external_links': 0,
+            'num_internal_links': 0,
+            'has_form': 0,
+            'num_scripts': 0,
+            'num_iframes': 0,
+            'has_login_form': 0,
+            'suspicious_keywords_count': 0
+        }
+        
+        try:
+            # Fetch webpage content
+            response = requests.get(url, headers=self.headers, timeout=self.timeout, verify=False)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                parsed_url = urlparse(url)
+                domain = parsed_url.netloc
+                
+                # Count links
+                links = soup.find_all('a', href=True)
+                for link in links:
+                    href = link['href']
+                    if href.startswith('http'):
+                        if domain in href:
+                            features['num_internal_links'] += 1
+                        else:
+                            features['num_external_links'] += 1
+                
+                # Check for forms
+                forms = soup.find_all('form')
+                features['has_form'] = 1 if forms else 0
+                
+                # Check for login forms (forms with password input)
+                for form in forms:
+                    if form.find('input', {'type': 'password'}):
+                        features['has_login_form'] = 1
+                        break
+                
+                # Count scripts and iframes
+                features['num_scripts'] = len(soup.find_all('script'))
+                features['num_iframes'] = len(soup.find_all('iframe'))
+                
+                # Count suspicious keywords in page text
+                text = soup.get_text().lower()
+                features['suspicious_keywords_count'] = sum(
+                    text.count(keyword) for keyword in SUSPICIOUS_KEYWORDS
+                )
+                
+        except Exception as e:
+            print(f"Error extracting content features from {url}: {e}")
+        
+        return features
+    
+    def _calculate_entropy(self, string):
+        """Calculate Shannon entropy of a string"""
+        if not string:
+            return 0
+        
+        # Calculate character frequency
+        char_freq = Counter(string)
+        string_len = len(string)
+        
+        # Calculate entropy
+        entropy = 0
+        for freq in char_freq.values():
+            probability = freq / string_len
+            entropy -= probability * math.log2(probability)
+        
+        return entropy
+    
+    def _get_domain_age(self, domain):
+        """Get domain age in days using WHOIS"""
+        try:
+            domain_info = whois.whois(domain)
+            if domain_info.creation_date:
+                creation_date = domain_info.creation_date
+                if isinstance(creation_date, list):
+                    creation_date = creation_date[0]
+                
+                age = (datetime.now() - creation_date).days
+                return age if age >= 0 else -1
+        except Exception:
+            pass
+        
+        return -1  # Unknown age
+    
+    def _has_dns_record(self, domain):
+        """Check if domain has DNS record"""
+        try:
+            dns.resolver.resolve(domain, 'A')
+            return 1
+        except Exception:
+            return 0
+
+
+def extract_features_from_dataset(df, url_column='url'):
+    """
+    Extract features from a dataframe containing URLs
+    
+    Args:
+        df: pandas DataFrame with URLs
+        url_column: name of column containing URLs
+    
+    Returns:
+        DataFrame with extracted features
+    """
+    import pandas as pd
+    from tqdm import tqdm
+    
+    extractor = FeatureExtractor()
+    features_list = []
+    
+    print("Extracting features from URLs...")
+    for idx, row in tqdm(df.iterrows(), total=len(df)):
+        url = row[url_column]
+        features = extractor.extract_all_features(url)
+        
+        # Add label if exists
+        if 'label' in df.columns:
+            features['label'] = row['label']
+        
+        features_list.append(features)
+    
+    return pd.DataFrame(features_list)
+
+
+if __name__ == "__main__":
+    # Test feature extraction
+    test_urls = [
+        "https://www.google.com",
+        "http://secure-paypal-verify.com/login.php?user=12345",
+        "http://192.168.1.1/admin"
+    ]
+    
+    extractor = FeatureExtractor()
+    
+    for url in test_urls:
+        print(f"\nURL: {url}")
+        features = extractor.extract_all_features(url)
+        for key, value in features.items():
+            print(f"  {key}: {value}")
+
+
+================================================================================
+
+FILE : src/hybrid_detector_hy.py
+
+================================================================================
+
+"""
+Hybrid Phishing Detector
+Combines rule-based and ML-based detection for optimal performance
+"""
+
+import numpy as np
+import pandas as pd
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import pickle
+from src.rule_based_detector_hy import RuleBasedDetector
+from src.ml_detector_hy import MLDetector
+from config import HYBRID_MODEL
+
+
+class HybridDetector:
+    """Hybrid detector combining rule-based and ML approaches"""
+    
+    def __init__(self, rule_based_detector_hy, ml_detector_hy, strategy='weighted'):
+        """
+        Initialize hybrid detector
+        
+        Args:
+            rule_detector: RuleBasedDetector instance
+            ml_detector: MLDetector instance
+            strategy: Combination strategy ('weighted', 'voting', 'cascade')
+        """
+        self.rule_detector = rule_based_detector_hy
+        self.ml_detector = ml_detector_hy
+        self.strategy = strategy
+        self.weights = {'rule': 0.3, 'ml': 0.7}  # Default weights
+    
+    def optimize_weights(self, X_val, y_val):
+        """
+        Optimize combination weights on validation set
+        
+        Args:
+            X_val: Validation features
+            y_val: Validation labels
+        """
+        print("\nOptimizing hybrid detector weights...")
+        
+        best_f1 = 0
+        best_weights = None
+        
+        # Try different weight combinations
+        for rule_weight in np.arange(0.0, 1.1, 0.1):
+            ml_weight = 1.0 - rule_weight
+            
+            self.weights = {'rule': rule_weight, 'ml': ml_weight}
+            predictions = self.predict(X_val)
+            f1 = f1_score(y_val, predictions)
+            
+            if f1 > best_f1:
+                best_f1 = f1
+                best_weights = self.weights.copy()
+        
+        self.weights = best_weights
+        print(f"Optimal weights: Rule={self.weights['rule']:.2f}, ML={self.weights['ml']:.2f}")
+        print(f"Validation F1-score: {best_f1:.4f}")
+    
+    def predict_single(self, features, return_details=False):
+        """
+        Predict single URL using hybrid approach
+        
+        Args:
+            features: Dictionary or Series of features
+            return_details: If True, return detailed prediction info
+        
+        Returns:
+            Prediction (0 or 1) or detailed dictionary
+        """
+        if isinstance(features, pd.Series):
+            features_dict = features.to_dict()
+            features_df = features.to_frame().T
+        else:
+            features_dict = features
+            features_df = pd.DataFrame([features])
+        
+        # Get predictions from both detectors
+        rule_score = self.rule_detector.predict_single(features_dict, return_score=True)
+        ml_proba = self.ml_detector.predict_proba(features_df)[0, 1]
+        
+        if self.strategy == 'weighted':
+            # Weighted combination
+            combined_score = (
+                self.weights['rule'] * rule_score +
+                self.weights['ml'] * ml_proba
+            )
+            prediction = 1 if combined_score > 0.5 else 0
+            
+        elif self.strategy == 'voting':
+            # Simple majority voting
+            rule_pred = self.rule_detector.predict_single(features_dict)
+            ml_pred = self.ml_detector.predict(features_df)[0]
+            prediction = 1 if (rule_pred + ml_pred) > 0 else 0
+            combined_score = (rule_score + ml_proba) / 2
+            
+        elif self.strategy == 'cascade':
+            # Cascade: if rule-based is highly confident, use it; otherwise use ML
+            if rule_score > 0.8:  # High confidence phishing
+                prediction = 1
+                combined_score = rule_score
+            elif rule_score < 0.2:  # High confidence legitimate
+                prediction = 0
+                combined_score = rule_score
+            else:  # Uncertain, use ML
+                prediction = 1 if ml_proba > 0.5 else 0
+                combined_score = ml_proba
+        else:
+            raise ValueError(f"Unknown strategy: {self.strategy}")
+        
+        if return_details:
+            return {
+                'prediction': prediction,
+                'combined_score': combined_score,
+                'rule_score': rule_score,
+                'ml_score': ml_proba,
+                'confidence': abs(combined_score - 0.5) * 2  # 0 to 1
+            }
+        
+        return prediction
+    
+    def predict(self, X, return_details=False):
+        """
+        Predict multiple URLs
+        
+        Args:
+            X: DataFrame of features
+            return_details: If True, return detailed predictions
+        
+        Returns:
+            Array of predictions or list of detailed dictionaries
+        """
+        if return_details:
+            return [self.predict_single(row, return_details=True) 
+                   for _, row in X.iterrows()]
+        else:
+            return np.array([self.predict_single(row) 
+                           for _, row in X.iterrows()])
+    
+    def evaluate(self, X_test, y_test, show_comparison=True):
+        """
+        Evaluate hybrid detector
+        
+        Args:
+            X_test: Test features
+            y_test: Test labels
+            show_comparison: Whether to compare with individual detectors
+        
+        Returns:
+            Dictionary of metrics
+        """
+        
+        print(f"HYBRID DETECTOR EVALUATION (Strategy: {self.strategy})")
+        
+        
+        # Hybrid predictions
+        predictions = self.predict(X_test)
+        
+        metrics = {
+            'accuracy': accuracy_score(y_test, predictions),
+            'precision': precision_score(y_test, predictions, zero_division=0),
+            'recall': recall_score(y_test, predictions, zero_division=0),
+            'f1_score': f1_score(y_test, predictions, zero_division=0)
+        }
+        
+        print(f"\nHybrid Detector Performance:")
+        print(f"Weights: Rule={self.weights['rule']:.2f}, ML={self.weights['ml']:.2f}")
+        print(f"Accuracy:  {metrics['accuracy']:.4f}")
+        print(f"Precision: {metrics['precision']:.4f}")
+        print(f"Recall:    {metrics['recall']:.4f}")
+        print(f"F1-Score:  {metrics['f1_score']:.4f}")
+        
+        if show_comparison:
+            # Compare with individual detectors
+            print("\n" + "-"*70)
+            print("COMPARISON WITH INDIVIDUAL DETECTORS")
+            print("-"*70)
+            
+            rule_preds = self.rule_detector.predict(X_test)
+            ml_preds = self.ml_detector.predict(X_test)
+            
+            comparison_data = {
+                'Rule-Based': {
+                    'accuracy': accuracy_score(y_test, rule_preds),
+                    'precision': precision_score(y_test, rule_preds, zero_division=0),
+                    'recall': recall_score(y_test, rule_preds, zero_division=0),
+                    'f1_score': f1_score(y_test, rule_preds, zero_division=0)
+                },
+                'ML-Based': {
+                    'accuracy': accuracy_score(y_test, ml_preds),
+                    'precision': precision_score(y_test, ml_preds, zero_division=0),
+                    'recall': recall_score(y_test, ml_preds, zero_division=0),
+                    'f1_score': f1_score(y_test, ml_preds, zero_division=0)
+                },
+                'Hybrid': metrics
+            }
+            
+            comparison_df = pd.DataFrame(comparison_data).T
+            print("\n" + comparison_df.to_string())
+            
+            # Calculate improvements
+            print("\n" + "-"*70)
+            print("HYBRID IMPROVEMENTS")
+            print("-"*70)
+            
+            for metric in ['accuracy', 'precision', 'recall', 'f1_score']:
+                rule_value = comparison_data['Rule-Based'][metric]
+                ml_value = comparison_data['ML-Based'][metric]
+                hybrid_value = comparison_data['Hybrid'][metric]
+                
+                best_individual = max(rule_value, ml_value)
+                improvement = ((hybrid_value - best_individual) / best_individual) * 100
+                
+                print(f"{metric.capitalize():12s}: {improvement:+.2f}% vs best individual")
+        
+        return metrics
+    
+    def analyze_predictions(self, X_test, y_test, n_samples=10):
+        """
+        Analyze detailed predictions on sample data
+        
+        Args:
+            X_test: Test features
+            y_test: Test labels
+            n_samples: Number of samples to analyze
+        """
+        
+        print("DETAILED PREDICTION ANALYSIS")
+        
+        
+        # Get detailed predictions
+        detailed_preds = self.predict(X_test.head(n_samples), return_details=True)
+        
+        for idx, (pred_details, true_label) in enumerate(zip(detailed_preds, y_test.head(n_samples))):
+            print(f"\nSample {idx + 1}:")
+            print(f"  True Label:     {'Phishing' if true_label == 1 else 'Legitimate'}")
+            print(f"  Prediction:     {'Phishing' if pred_details['prediction'] == 1 else 'Legitimate'}")
+            print(f"  Correct:        {pred_details['prediction'] == true_label}")
+            print(f"  Combined Score: {pred_details['combined_score']:.4f}")
+            print(f"  Rule Score:     {pred_details['rule_score']:.4f}")
+            print(f"  ML Score:       {pred_details['ml_score']:.4f}")
+            print(f"  Confidence:     {pred_details['confidence']:.4f}")
+    
+    def save(self, filepath=None):
+        """Save hybrid detector safely"""
+        if filepath is None:
+            filepath = HYBRID_MODEL
+    
+        data = {
+            'strategy': self.strategy,
+            'weights': self.weights,
+            'rule_thresholds': self.rule_detector.thresholds,
+            'ml_model': self.ml_detector.model  # or save ML separately if needed
+        }
+    
+        with open(filepath, 'wb') as f:
+            pickle.dump(data, f)
+    
+        print(f"\nHybrid detector saved to {filepath}")
+    @classmethod
+    def load(cls, filepath=None):
+        """Load hybrid detector"""
+        if filepath is None:
+            filepath = HYBRID_MODEL
+        
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        
+        detector = cls(
+            rule_detector_hy=data['rule_detector'],
+            ml_detector_hy=data['ml_detector'],
+            strategy=data['strategy']
+        )
+        detector.weights = data['weights']
+        
+        print(f"Hybrid detector loaded from {filepath}")
+        return detector
+
+
+if __name__ == "__main__":
+    print("Hybrid Detector module loaded successfully!")
+    print("Available strategies: weighted, voting, cascade")
+
+
+================================================================================
+
+FILE : src/ml_detector_hy.py
+
+================================================================================
+
+"""
+Machine Learning Based Phishing Detector
+Implements and compares multiple ML algorithms
+"""
+
+import numpy as np
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import GridSearchCV, cross_val_score
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    classification_report, confusion_matrix, roc_auc_score, roc_curve
+)
+from imblearn.over_sampling import SMOTE
+import pickle
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from config import ML_ALGORITHMS, ML_MODEL, CV_FOLDS, RANDOM_STATE, RESULTS_DIR
+import os
+
+
+class MLDetector:
+    """Machine Learning based phishing detector"""
+    
+    def __init__(self, algorithm='Random Forest'):
+        self.algorithm = algorithm
+        self.model = None
+        self.best_params = None
+        self.feature_importance = None
+    
+    def handle_class_imbalance(self, X_train, y_train, method='smote'):
+        """
+        Handle class imbalance in training data
+        
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            method: 'smote' or 'class_weight'
+        
+        Returns:
+            Balanced X_train, y_train (if SMOTE) or None (if class_weight)
+        """
+        # Check class distribution
+        class_counts = pd.Series(y_train).value_counts()
+        print(f"\nOriginal class distribution:")
+        print(class_counts)
+        
+        imbalance_ratio = class_counts.max() / class_counts.min()
+        print(f"Imbalance ratio: {imbalance_ratio:.2f}")
+        
+        if imbalance_ratio > 1.5:
+            if method == 'smote':
+                print("Applying SMOTE for class balancing...")
+                smote = SMOTE(random_state=RANDOM_STATE)
+                X_train_balanced, y_train_balanced = smote.fit_resample(X_train, y_train)
+                
+                print(f"\nBalanced class distribution:")
+                print(pd.Series(y_train_balanced).value_counts())
+                
+                return X_train_balanced, y_train_balanced
+            elif method == 'class_weight':
+                print("Will use class_weight='balanced' in model training")
+                return None, None
+        else:
+            print("Classes are relatively balanced, no resampling needed")
+            return None, None
+    
+    def train(self, X_train, y_train, use_grid_search=True, balance_method='smote'):
+        """
+        Train ML model with hyperparameter tuning
+        
+        Args:
+            X_train: Training features
+            y_train: Training labels
+            use_grid_search: Whether to use grid search for hyperparameter tuning
+            balance_method: Method to handle class imbalance ('smote' or 'class_weight')
+        """
+        
+        print(f"TRAINING {self.algorithm.upper()} MODEL")
+        
+        
+        # Handle class imbalance
+        X_balanced, y_balanced = self.handle_class_imbalance(
+            X_train, y_train, method=balance_method
+        )
+        
+        if X_balanced is not None:
+            X_train, y_train = X_balanced, y_balanced
+        
+        # Initialize model
+        if self.algorithm == 'Random Forest':
+            base_model = RandomForestClassifier(random_state=RANDOM_STATE)
+            param_grid = ML_ALGORITHMS['Random Forest']
+        elif self.algorithm == 'SVM':
+            base_model = SVC(random_state=RANDOM_STATE, probability=True)
+            param_grid = ML_ALGORITHMS['SVM']
+        elif self.algorithm == 'Logistic Regression':
+            base_model = LogisticRegression(random_state=RANDOM_STATE, max_iter=1000)
+            param_grid = ML_ALGORITHMS['Logistic Regression']
+        else:
+            raise ValueError(f"Unknown algorithm: {self.algorithm}")
+        
+        if use_grid_search and param_grid:
+            print(f"\nPerforming Grid Search with {CV_FOLDS}-fold cross-validation...")
+            print(f"Parameter grid: {param_grid}")
+            
+            grid_search = GridSearchCV(
+                base_model,
+                param_grid,
+                cv=CV_FOLDS,
+                scoring='f1',
+                n_jobs=-1,
+                verbose=1
+            )
+            
+            grid_search.fit(X_train, y_train)
+            
+            self.model = grid_search.best_estimator_
+            self.best_params = grid_search.best_params_
+            
+            print(f"\nBest parameters: {self.best_params}")
+            print(f"Best cross-validation F1-score: {grid_search.best_score_:.4f}")
+        else:
+            print("\nTraining model with default parameters...")
+            self.model = base_model
+            self.model.fit(X_train, y_train)
+        
+        # Get feature importance (if available)
+        if hasattr(self.model, 'feature_importances_'):
+            self.feature_importance = pd.DataFrame({
+                'feature': X_train.columns,
+                'importance': self.model.feature_importances_
+            }).sort_values('importance', ascending=False)
+            
+            print("\nTop 10 Most Important Features:")
+            print(self.feature_importance.head(10).to_string(index=False))
+        
+        # Cross-validation scores
+        cv_scores = cross_val_score(self.model, X_train, y_train, cv=CV_FOLDS, scoring='f1')
+        print(f"\nCross-validation F1-scores: {cv_scores}")
+        print(f"Mean CV F1-score: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
+        
+        print(f"\n{self.algorithm} model training completed!")
+    
+    def predict(self, X):
+        """Make predictions"""
+        if self.model is None:
+            raise ValueError("Model not trained yet!")
+        return self.model.predict(X)
+    
+    def predict_proba(self, X):
+        """Predict probabilities"""
+        if self.model is None:
+            raise ValueError("Model not trained yet!")
+        return self.model.predict_proba(X)
+    
+    def evaluate(self, X_test, y_test, save_plots=True):
+        """
+        Evaluate ML model
+        
+        Args:
+            X_test: Test features
+            y_test: Test labels
+            save_plots: Whether to save visualization plots
+        
+        Returns:
+            Dictionary of metrics
+        """
+        
+        print(f"{self.algorithm.upper()} MODEL EVALUATION")
+        
+        
+        # Predictions
+        y_pred = self.predict(X_test)
+        y_pred_proba = self.predict_proba(X_test)[:, 1]
+        
+        # Calculate metrics
+        metrics = {
+            'accuracy': accuracy_score(y_test, y_pred),
+            'precision': precision_score(y_test, y_pred, zero_division=0),
+            'recall': recall_score(y_test, y_pred, zero_division=0),
+            'f1_score': f1_score(y_test, y_pred, zero_division=0),
+            'roc_auc': roc_auc_score(y_test, y_pred_proba)
+        }
+        
+        print(f"\nPerformance Metrics:")
+        print(f"Accuracy:  {metrics['accuracy']:.4f}")
+        print(f"Precision: {metrics['precision']:.4f}")
+        print(f"Recall:    {metrics['recall']:.4f}")
+        print(f"F1-Score:  {metrics['f1_score']:.4f}")
+        print(f"ROC-AUC:   {metrics['roc_auc']:.4f}")
+        
+        print(f"\nClassification Report:")
+        print(classification_report(y_test, y_pred, target_names=['Legitimate', 'Phishing']))
+        
+        # Confusion Matrix
+        cm = confusion_matrix(y_test, y_pred)
+        print(f"\nConfusion Matrix:")
+        print(f"                 Predicted")
+        print(f"                 Legit  Phish")
+        print(f"Actual Legit     {cm[0][0]:5d}  {cm[0][1]:5d}")
+        print(f"       Phish     {cm[1][0]:5d}  {cm[1][1]:5d}")
+        
+        if save_plots:
+            self._plot_results(y_test, y_pred, y_pred_proba, cm)
+        
+        return metrics
+    
+    def _plot_results(self, y_test, y_pred, y_pred_proba, cm):
+        """Create and save evaluation plots"""
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        
+        # Confusion Matrix
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=axes[0],
+                    xticklabels=['Legitimate', 'Phishing'],
+                    yticklabels=['Legitimate', 'Phishing'])
+        axes[0].set_xlabel('Predicted')
+        axes[0].set_ylabel('Actual')
+        axes[0].set_title(f'{self.algorithm} - Confusion Matrix')
+        
+        # ROC Curve
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+        roc_auc = roc_auc_score(y_test, y_pred_proba)
+        
+        axes[1].plot(fpr, tpr, color='darkorange', lw=2,
+                    label=f'ROC curve (AUC = {roc_auc:.4f})')
+        axes[1].plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        axes[1].set_xlim([0.0, 1.0])
+        axes[1].set_ylim([0.0, 1.05])
+        axes[1].set_xlabel('False Positive Rate')
+        axes[1].set_ylabel('True Positive Rate')
+        axes[1].set_title(f'{self.algorithm} - ROC Curve')
+        axes[1].legend(loc='lower right')
+        axes[1].grid(alpha=0.3)
+        
+        plt.tight_layout()
+        
+        plot_file = os.path.join(RESULTS_DIR, f'{self.algorithm.lower().replace(" ", "_")}_evaluation.png')
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        print(f"\nEvaluation plots saved to {plot_file}")
+        plt.close()
+        
+        # Feature Importance Plot (if available)
+        if self.feature_importance is not None:
+            plt.figure(figsize=(10, 8))
+            top_features = self.feature_importance.head(15)
+            plt.barh(range(len(top_features)), top_features['importance'])
+            plt.yticks(range(len(top_features)), top_features['feature'])
+            plt.xlabel('Importance')
+            plt.title(f'{self.algorithm} - Top 15 Feature Importances')
+            plt.gca().invert_yaxis()
+            plt.tight_layout()
+            
+            importance_file = os.path.join(RESULTS_DIR, 
+                                          f'{self.algorithm.lower().replace(" ", "_")}_feature_importance.png')
+            plt.savefig(importance_file, dpi=300, bbox_inches='tight')
+            print(f"Feature importance plot saved to {importance_file}")
+            plt.close()
+    
+    def save(self, filepath=None):
+        """Save trained model"""
+        if filepath is None:
+            filepath = ML_MODEL
+        
+        if self.model is None:
+            raise ValueError("No model to save!")
+        
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+                'algorithm': self.algorithm,
+                'model': self.model,
+                'best_params': self.best_params,
+                'feature_importance': self.feature_importance
+            }, f)
+        
+        print(f"\nModel saved to {filepath}")
+    
+    @classmethod
+    def load(cls, filepath=None):
+        """Load trained model"""
+        if filepath is None:
+            filepath = ML_MODEL
+        
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+        
+        detector = cls(algorithm=data['algorithm'])
+        detector.model = data['model']
+        detector.best_params = data['best_params']
+        detector.feature_importance = data['feature_importance']
+        
+        print(f"Model loaded from {filepath}")
+        return detector
+
+
+def compare_algorithms_all_hyn(X_train, X_test, y_train, y_test):
+    """
+    Train and compare multiple ML algorithms
+    
+    Returns:
+        Dictionary of results for each algorithm
+    """
+    algorithms = ['Random Forest', 'SVM', 'Logistic Regression']
+    results = {}
+    
+    for algo in algorithms:
+        
+        print(f"TRAINING AND EVALUATING {algo.upper()}")
+        
+        
+        detector = MLDetector(algorithm=algo)
+        detector.train(X_train, y_train, use_grid_search=True)
+        metrics = detector.evaluate(X_test, y_test)
+        
+        results[algo] = {
+            'detector': detector,
+            'metrics': metrics
+        }
+    
+    # Compare results
+    
+    print("ALGORITHM COMPARISON")
+    
+    
+    comparison_df = pd.DataFrame({
+        algo: result['metrics'] for algo, result in results.items()
+    }).T
+    
+    print("\n" + comparison_df.to_string())
+    
+    # Find best algorithm
+    best_algo = comparison_df['f1_score'].idxmax()
+    print(f"\nBest Algorithm: {best_algo}")
+    print(f"F1-Score: {comparison_df.loc[best_algo, 'f1_score']:.4f}")
+    
+    return results, best_algo
+
+
+if __name__ == "__main__":
+    print("ML Detector module loaded successfully!")
+    print("Available algorithms:", list(ML_ALGORITHMS.keys()))
+
+
+================================================================================
+
+FILE : src/rule_based_detector_hy.py
+
+================================================================================
+
+"""
+Rule-Based Phishing Detector
+Implements heuristic rules for phishing detection
+"""
+
+import numpy as np
+import pandas as pd
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import pickle
+import os
+
+from config import (
+    URL_LENGTH_THRESHOLD, SUBDOMAIN_COUNT_THRESHOLD,
+    DOT_COUNT_THRESHOLD, HYPHEN_COUNT_THRESHOLD,
+    RULE_BASED_MODEL
+)
+
+# =====================
+# Top-level functions
+# =====================
+def check_url_length(features, threshold):
+    return features['url_length'] > threshold
+
+def check_has_ip(features):
+    return features['has_ip'] == 1
+
+def check_subdomain_count(features, threshold):
+    return features['subdomain_count'] > threshold
+
+def check_dot_count(features, threshold):
+    return features['dot_count'] > threshold
+
+def check_hyphen_count(features, threshold):
+    return features['hyphen_count'] > threshold
+
+def check_at_symbol(features):
+    return features['at_symbol'] == 1
+
+def check_double_slash_redirect(features):
+    return features['double_slash_redirecting'] == 1
+
+def check_prefix_suffix(features):
+    return features['prefix_suffix'] == 1
+
+def check_shortening_service(features):
+    return features['shortening_service'] == 1
+
+def check_suspicious_tld(features):
+    return features['suspicious_tld'] == 1
+
+def check_https(features):
+    return features['has_https'] == 0
+
+def check_dns_record(features):
+    return features['has_dns_record'] == 0
+
+def check_login_form(features):
+    return features['has_login_form'] == 1
+
+def check_suspicious_keywords(features):
+    return features['suspicious_keywords_count'] > 3
+
+def check_external_links(features):
+    return features['num_internal_links'] > 0 and features['num_external_links'] > features['num_internal_links']
+
+
+class RuleBasedDetector:
+    """Rule-based phishing detection using heuristics"""
+    
+    def __init__(self):
+        self.rules = []
+        self.thresholds = {}
+        self.rule_weights = {}
+    
+    def optimize_thresholds(self, X_train, y_train):
+        """
+        Optimize rule thresholds based on training data
+        
+        Args:
+            X_train: Training features
+            y_train: Training labels
+        """
+        print("Optimizing rule-based thresholds...")
+        
+        # Analyze feature distributions for legitimate vs phishing
+        phishing_data = X_train[y_train == 1]
+        legitimate_data = X_train[y_train == 0]
+        
+        # Optimize thresholds for key features
+        self.thresholds['url_length'] = self._find_optimal_threshold(
+            legitimate_data['url_length'], 
+            phishing_data['url_length']
+        )
+        
+        self.thresholds['subdomain_count'] = self._find_optimal_threshold(
+            legitimate_data['subdomain_count'],
+            phishing_data['subdomain_count']
+        )
+        
+        self.thresholds['dot_count'] = self._find_optimal_threshold(
+            legitimate_data['dot_count'],
+            phishing_data['dot_count']
+        )
+        
+        self.thresholds['hyphen_count'] = self._find_optimal_threshold(
+            legitimate_data['hyphen_count'],
+            phishing_data['hyphen_count']
+        )
+        
+        print("\nOptimized Thresholds:")
+        for feature, threshold in self.thresholds.items():
+            print(f"  {feature}: {threshold}")
+        
+        # Define rules with optimized thresholds
+        self._define_rules()
+    
+    def _find_optimal_threshold(self, legitimate_values, phishing_values):
+        """Find threshold that best separates legitimate from phishing"""
+        # Use mean + std as threshold
+        legit_mean = legitimate_values.mean()
+        legit_std = legitimate_values.std()
+        phish_mean = phishing_values.mean()
+        
+        # Threshold is midpoint between means, adjusted for std
+        threshold = (legit_mean + phish_mean) / 2
+        
+        return max(threshold, legit_mean + legit_std)
+    
+    def _define_rules(self):
+        """Define detection rules"""
+        self.rules = [
+        {'name': 'URL Length', 'check': lambda x: check_url_length(x, self.thresholds.get('url_length', 75)), 'weight': 1.5},
+        {'name': 'IP Address in URL', 'check': check_has_ip, 'weight': 3.0},
+        {'name': 'Excessive Subdomains', 'check': lambda x: check_subdomain_count(x, self.thresholds.get('subdomain_count', 2)), 'weight': 2.0},
+        {'name': 'Excessive Dots', 'check': lambda x: check_dot_count(x, self.thresholds.get('dot_count', 3)), 'weight': 1.0},
+        {'name': 'Excessive Hyphens', 'check': lambda x: check_hyphen_count(x, self.thresholds.get('hyphen_count', 1)), 'weight': 1.5},
+        {'name': 'At Symbol (@)', 'check': check_at_symbol, 'weight': 2.5},
+        {'name': 'Double Slash Redirect', 'check': check_double_slash_redirect, 'weight': 2.0},
+        {'name': 'Prefix/Suffix with Hyphen', 'check': check_prefix_suffix, 'weight': 1.5},
+        {'name': 'URL Shortening Service', 'check': check_shortening_service, 'weight': 2.0},
+        {'name': 'Suspicious TLD', 'check': check_suspicious_tld, 'weight': 2.5},
+        {'name': 'No HTTPS', 'check': check_https, 'weight': 1.0},
+        {'name': 'No DNS Record', 'check': check_dns_record, 'weight': 3.0},
+        {'name': 'Has Login Form', 'check': check_login_form, 'weight': 1.5},
+        {'name': 'Suspicious Keywords', 'check': check_suspicious_keywords, 'weight': 1.0},
+        {'name': 'High External Links', 'check': check_external_links, 'weight': 0.5}
+    ]
+    
+    def predict_single(self, features, return_score=False):
+        """
+        Predict single URL
+        
+        Args:
+            features: Dictionary of features
+            return_score: If True, return risk score instead of binary prediction
+        
+        Returns:
+            Prediction (0=legitimate, 1=phishing) or risk score
+        """
+        risk_score = 0
+        max_score = sum(rule['weight'] for rule in self.rules)
+        
+        for rule in self.rules:
+            try:
+                if rule['check'](features):
+                    risk_score += rule['weight']
+            except (KeyError, TypeError):
+                # Feature not available, skip rule
+                continue
+        
+        # Normalize score to 0-1
+        normalized_score = risk_score / max_score if max_score > 0 else 0
+        
+        if return_score:
+            return normalized_score
+        else:
+            # Threshold: if risk score > 30% of max, classify as phishing
+            return 1 if normalized_score > 0.3 else 0
+    
+    def predict(self, X, return_scores=False):
+        """
+        Predict multiple URLs
+        
+        Args:
+            X: DataFrame of features
+            return_scores: If True, return risk scores instead of binary predictions
+        
+        Returns:
+            Array of predictions or risk scores
+        """
+        if self.rules is None or len(self.rules) == 0:
+            self._define_rules()
+        
+        predictions = []
+        
+        for idx, row in X.iterrows():
+            pred = self.predict_single(row.to_dict(), return_score=return_scores)
+            predictions.append(pred)
+        
+        return np.array(predictions)
+    
+    def evaluate(self, X_test, y_test):
+        """
+        Evaluate rule-based detector
+        
+        Args:
+            X_test: Test features
+            y_test: Test labels
+        
+        Returns:
+            Dictionary of metrics
+        """
+        print("\n" + "="*50)
+        print("RULE-BASED DETECTOR EVALUATION")
+        print("="*50)
+        
+        predictions = self.predict(X_test)
+        
+        metrics = {
+            'accuracy': accuracy_score(y_test, predictions),
+            'precision': precision_score(y_test, predictions, zero_division=0),
+            'recall': recall_score(y_test, predictions, zero_division=0),
+            'f1_score': f1_score(y_test, predictions, zero_division=0)
+        }
+        
+        print(f"\nAccuracy:  {metrics['accuracy']:.4f}")
+        print(f"Precision: {metrics['precision']:.4f}")
+        print(f"Recall:    {metrics['recall']:.4f}")
+        print(f"F1-Score:  {metrics['f1_score']:.4f}")
+        
+        # Show which rules triggered most often
+        print("\n" + "-"*50)
+        print("Rule Trigger Frequency:")
+        print("-"*50)
+        
+        rule_triggers = {rule['name']: 0 for rule in self.rules}
+        
+        for idx, row in X_test.iterrows():
+            for rule in self.rules:
+                try:
+                    if rule['check'](row.to_dict()):
+                        rule_triggers[rule['name']] += 1
+                except (KeyError, TypeError):
+                    continue
+        
+        for rule_name, count in sorted(rule_triggers.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / len(X_test)) * 100
+            print(f"{rule_name:30s}: {count:5d} ({percentage:5.1f}%)")
+        
+        return metrics
+    
+    def save(self, filepath=None):
+        """Save rule-based detector"""
+        if filepath is None:
+            filepath = RULE_BASED_MODEL
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'wb') as f:
+            pickle.dump({
+            'thresholds': self.thresholds
+            }, f)
+        
+        print(f"\nRule-based detector saved to {filepath}")
+    
+    @classmethod
+    def load(cls, filepath=None):
+        """Load rule-based detector"""
+        if filepath is None:
+            filepath = RULE_BASED_MODEL
+        
+        detector = cls()
+        
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
+            
+        detector.thresholds = data['thresholds']
+        # Recreate rules using thresholds
+        detector._define_rules()
+        print(f"Rule-based detector loaded from {filepath}")
+        return detector
+
+
+if __name__ == "__main__":
+    # Test rule-based detector
+    print("Testing Rule-Based Detector...")
+    
+    # Create sample data
+    sample_features = pd.DataFrame({
+        'url_length': [25, 80],
+        'has_ip': [0, 1],
+        'subdomain_count': [1, 4],
+        'dot_count': [2, 8],
+        'hyphen_count': [0, 5],
+        'at_symbol': [0, 1],
+        'double_slash_redirecting': [0, 1],
+        'prefix_suffix': [0, 1],
+        'shortening_service': [0, 0],
+        'suspicious_tld': [0, 1],
+        'has_https': [1, 0],
+        'has_dns_record': [1, 0],
+        'has_login_form': [0, 1],
+        'suspicious_keywords_count': [0, 5],
+        'num_external_links': [10, 50],
+        'num_internal_links': [20, 5]
+    })
+    
+    detector = RuleBasedDetector()
+    detector._define_rules()
+    
+    predictions = detector.predict(sample_features, return_scores=True)
+    print(f"\nRisk Scores: {predictions}")
+    
+    binary_preds = detector.predict(sample_features)
+    print(f"Predictions: {binary_preds}")
+
+
